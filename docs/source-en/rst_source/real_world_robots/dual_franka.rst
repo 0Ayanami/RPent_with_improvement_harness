@@ -117,10 +117,21 @@ The tool only reads state. Without ``--output``, sessions are saved under the
 script directory's ``calibration_tools/sessions/``, regardless of the working
 directory.
 
-Stop the collector with ``Ctrl+C``. For D455, repeat with ``D455_SERIAL``,
-``/raw/d455``, and ``calibration_tools/sessions/d455-to-right``. Use a new
-directory for each session; D455 stream compatibility must be checked against
-the supported distortion models above.
+Use the saved-sample table to inspect each sample's corner count and
+reprojection RMS in pixels. Click ``Preview`` to open its annotated image,
+then ``Exclude`` to remove an unsuitable sample from the next solve. Its
+files remain in the session's ``excluded/`` directory. ``Active samples``
+counts only samples used by the solver; IDs remain unchanged, so gaps are
+normal. Adding or excluding samples does not recalculate existing calibration
+results: run the solver again before exporting.
+
+Stop the collector with ``Ctrl+C``. To start again after an interruption or
+recollect the entire session, rerun the command with a new ``--output`` directory.
+Existing session files remain on disk but are not loaded into the new collection.
+
+For D455, repeat with ``D455_SERIAL``, ``/raw/d455``, and
+``calibration_tools/sessions/d455-to-right``. Check that its stream configuration
+uses a supported distortion model as described above.
 
 **3. Fit and export**
 
@@ -136,6 +147,9 @@ For D455, use ``d455-to-right`` and ``d455_to_right.yaml`` instead. Inspect
 ``quality_report.json`` and validate the candidate against independent physical
 measurements. Successful fitting or YAML export does not establish accuracy.
 Export does not overwrite existing files.
+When exporting a recalculated result, choose a new output filename, such as
+``calibration_tools/exports/base_to_right_v2.yaml``. Validate it before updating
+``perception.calibration`` to use the new file.
 
 **4. Configure RPent**
 

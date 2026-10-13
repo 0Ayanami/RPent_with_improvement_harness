@@ -103,10 +103,11 @@ RPent 可以通过 RLinf ``RealWorldEnv`` worker 控制双节点双臂 Franka �
 工具只读取状态，不会移动机械臂。不传 ``--output`` 时，默认写入脚本所在目录下的
 ``calibration_tools/sessions/``，与启动时的工作目录无关。
 
-完成后按 ``Ctrl+C`` 停止采集器。标定 D455 时重复上述命令，将序列号换成
-``D455_SERIAL``、URL 换成 ``/raw/d455``、输出目录换成
-``calibration_tools/sessions/d455-to-right``。每次采集使用新目录；D455 流配置
-需先确认符合上面的畸变模型支持范围。
+在已保存样本表格中查看角点数量和重投影 RMS（像素）。点击 ``Preview`` 打开带标注的样本图像，再通过 ``Exclude`` 将不合适的样本排除出下一次求解；文件仍保留在会话的 ``excluded/`` 目录中。``Active samples`` 只统计参与求解的有效样本；样本编号保持不变，出现空缺是正常的。增加或排除样本不会自动重算已有标定结果，应重新运行求解器后再导出。
+
+按 ``Ctrl+C`` 停止采集器。中断后重新开始或整批重采时，重新运行上面的命令，并为 ``--output`` 指定新会话目录。旧会话文件仍保留在磁盘上，但不会加载到新的采集会话中。
+
+标定 D455 时重复上述命令，将序列号换成 ``D455_SERIAL``、URL 换成 ``/raw/d455``、输出目录换成 ``calibration_tools/sessions/d455-to-right``。D455 流配置需先确认符合上面的畸变模型支持范围。
 
 **3. 求解并导出**
 
@@ -121,6 +122,8 @@ RPent 可以通过 RLinf ``RealWorldEnv`` worker 控制双节点双臂 Franka �
 D455 使用同样步骤，将会话目录和输出文件改为 ``d455-to-right`` 和
 ``d455_to_right.yaml``。检查会话中的 ``quality_report.json``，并通过独立实物
 测量验证候选外参；求解成功或导出 YAML 不代表精度已验证。导出不会覆盖已有文件。
+重新求解后，导出时使用新文件名，例如 ``calibration_tools/exports/base_to_right_v2.yaml``。
+验证新结果后，再更新 ``perception.calibration`` 中的文件路径。
 
 **4. 配置 RPent**
 
