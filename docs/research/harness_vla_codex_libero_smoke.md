@@ -175,7 +175,7 @@ worker 为每个 episode 启动相应 suite/task/seed 的 Env，规划在 Window
 ```bash
 cd /home2/wanquan/RPent
 source robots/libero/deployment/environment.sh
-.venv/bin/python -c "from rpent.utils.rpc import HttpRpcClient; print(HttpRpcClient('http://127.0.0.1:8801').call('vla.status', timeout_s=10)); print(HttpRpcClient('http://127.0.0.1:8802').call('healthz', timeout_s=10))"
+.venv/bin/python -c "from rpent.utils.rpc.http_rpc import HttpRpcClient; print(HttpRpcClient('http://127.0.0.1:8801').call('vla.status', timeout_s=10)); print(HttpRpcClient('http://127.0.0.1:8802').call('healthz', timeout_s=10))"
 curl --fail --noproxy '*' http://127.0.0.1:8870/health
 ```
 
