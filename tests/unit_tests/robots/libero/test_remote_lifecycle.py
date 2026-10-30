@@ -14,6 +14,7 @@
 
 """Offline lifecycle and transfer evidence for local Codex/remote LIBERO trials."""
 
+import asyncio
 import base64
 import json
 import time
@@ -131,6 +132,7 @@ def trial(tmp_path, monkeypatch):
                     input_schema={"type": "object", "properties": {}},
                     readonly=False,
                 ),
+                CommonTools(memory=memory).list_dir,
             ),
             execute_tool=execute,
             solved=lambda: env.terminated,
@@ -297,6 +299,14 @@ def test_lease_expiration_cleans_the_native_trial(trial):
 
 
 def test_local_runner_downloads_artifacts_and_restores_local_paths(trial, monkeypatch):
+    from mcp import types
+
+    from rpent.planner.utils.http_mcp_server import build_mcp_server
+    from rpent.utils import logging as output_logging
+
+    # The construct CLI may be the process's first owner of an output directory.
+    monkeypatch.setattr(output_logging, "_output_dir", None)
+
     # Reuse the already-started app lifespan through a small context wrapper.
     class BorrowedClient:
         def __enter__(self):
@@ -312,6 +322,18 @@ def test_local_runner_downloads_artifacts_and_restores_local_paths(trial, monkey
 
         def solve(**call):
             assert str(trial.snapshot.corpus_dir) in call["system_prompt"]
+            mcp = build_mcp_server(call["toolkit"])
+            inventory = asyncio.run(
+                mcp.request_handlers[types.ListToolsRequest](types.ListToolsRequest())
+            )
+            tools = {tool.name: tool for tool in inventory.root.tools}
+            assert {"move", "list_dir"} <= tools.keys()
+            schema = tools["list_dir"].inputSchema
+            assert (
+                str(trial.spec.output_dir)
+                in schema["properties"]["path"]["description"]
+            )
+            assert "{{output_dir}}" not in json.dumps(schema)
             result = call["toolkit"].execute_tool("move", {})
             assert result.images == [b"offline-png"]
             assert (

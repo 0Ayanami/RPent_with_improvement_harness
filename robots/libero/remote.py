@@ -38,6 +38,7 @@ from rpent.planner.base import build_planner
 from rpent.tools.base import ToolResult
 from rpent.tools.toolkit import Toolkit
 from rpent.utils.config import get_repo_root
+from rpent.utils.logging import init_output_dir
 from rpent.utils.serialization import strip_inline_images
 
 PROTOCOL_VERSION = 1
@@ -316,6 +317,7 @@ class RemoteLiberoTrialRunner:
         ):
             raise ValueError(f"trial output must be fresh: {output}")
         output.mkdir(parents=True, exist_ok=True)
+        init_output_dir(output)
         remote = self.execution.remote
         if remote is None:
             raise ValueError("remote endpoint is required")
