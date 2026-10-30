@@ -1,6 +1,7 @@
 # Harness2 Memory 构建与评测指南
 
 当前主流程是 **seed 0 构建 memory → 冻结完整语料 → seed 1–10 对照评测**。
+单任务真实联调的配置、产物、token 与延迟记录见[improvement 冒烟记录](memory_improvement_smoke.md)。
 每个构建任务执行 k=1 的基线 memory 回合（base）、INV、DOM、composed final 四个回合，随后单独反思。
 模型只修改现有 memory 叶子；执行模型、VLA、原语、提示和任务判据保持固定。
 
