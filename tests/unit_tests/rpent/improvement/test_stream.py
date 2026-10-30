@@ -230,6 +230,72 @@ def test_full_paper_cases_preserve_seed_split(config, benchmark, suites, total):
     assert {case.suite for case in evaluation} == set(config.suites)
 
 
+@pytest.mark.parametrize(
+    "benchmark,suite", [("libero", "libero_object"), ("libero_pro", "libero_goal_swap")]
+)
+def test_single_suite_smoke_plan_has_one_construction_and_evaluation_case(
+    config, benchmark, suite
+):
+    fields = config.model_dump()
+    fields.update(
+        benchmark=benchmark,
+        suite_names=[suite],
+        task_ids=[0],
+        evaluation_seeds=[1],
+    )
+    report = stream.plan(stream.StreamConfig.model_validate(fields))
+    assert report["expected_rollouts"] == 4
+    assert report["full_paper_case_table"] is False
+    assert [
+        (case["suite"], case["task_id"], case["seed"])
+        for case in report["construction_cases"]
+    ] == [(suite, 0, 0)]
+    assert [
+        (case["suite"], case["task_id"], case["seed"])
+        for case in report["evaluation_cases"]
+    ] == [(suite, 0, 1)]
+
+
+@pytest.mark.parametrize(
+    "benchmark,suites",
+    [
+        ("libero", []),
+        ("libero", ["unknown"]),
+        ("libero", ["libero_object", "libero_object"]),
+        ("libero", ["libero_object_task"]),
+        ("libero_pro", ["libero_object"]),
+    ],
+)
+def test_invalid_suite_selection_is_rejected(config, benchmark, suites):
+    fields = config.model_dump()
+    fields.update(benchmark=benchmark, suite_names=suites)
+    with pytest.raises(ValueError, match="suite_names"):
+        stream.StreamConfig.model_validate(fields)
+
+
+def test_suite_filter_cannot_be_reported_as_full_paper_matrix(config):
+    fields = config.model_dump()
+    fields["suite_names"] = ["libero_object"]
+    report = stream.plan(stream.StreamConfig.model_validate(fields))
+    assert len(report["construction_cases"]) == 10
+    assert len(report["evaluation_cases"]) == 100
+    assert report["full_paper_case_table"] is False
+
+
+def test_selected_suite_order_is_preserved(config):
+    fields = config.model_dump()
+    fields.update(
+        suite_names=["libero_goal", "libero_object"],
+        task_ids=[0],
+        evaluation_seeds=[1],
+    )
+    selected = stream.StreamConfig.model_validate(fields)
+    assert [case.suite for case in selected.cases(construction=True)] == [
+        "libero_goal",
+        "libero_object",
+    ]
+
+
 @pytest.mark.parametrize("seeds", [[0], [0, 1], [-1, 1], [1, 1]])
 def test_invalid_evaluation_seed_split_is_rejected(config, seeds):
     fields = config.model_dump()

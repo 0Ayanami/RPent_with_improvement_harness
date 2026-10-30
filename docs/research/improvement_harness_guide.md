@@ -55,7 +55,7 @@ print(root)
 计划包含构建/评测 case 表、语料 hash、scaffold 指纹和预计 rollout 数，不请求模型、不启动 Env/VLA。
 路径不存在时先准备目录；不同计划必须使用新的 `output_dir`。
 
-`task_ids` 或 `evaluation_seeds` 可以缩小，用于服务器 smoke，但这不再是论文完整矩阵。
+`suite_names` 可显式选择 benchmark 中的 suite，例如 `suite_names: [libero_object]`；省略时保留完整 suite 表。将它与 `task_ids: [0]`、`evaluation_seeds: [1]` 组合，可只构建一个任务并为每组预声明一个评测回合。`task_ids` 或 `evaluation_seeds` 也可以单独缩小，用于服务器 smoke，但这不再是论文完整矩阵。
 `evaluation_seeds` 禁止包含 0。不同 seed 是否代表不同初态仍需服务器检查。
 
 ## 3. 服务器构建

@@ -85,6 +85,7 @@ class StreamConfig(Record):
     experiment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
     output_dir: Path
     benchmark: Literal["libero", "libero_pro"] = "libero"
+    suite_names: list[str] | None = Field(default=None, min_length=1)
     task_ids: list[int] = Field(default_factory=lambda: list(range(10)), min_length=1)
     evaluation_seeds: list[int] = Field(
         default_factory=lambda: list(range(1, 11)), min_length=1
@@ -101,6 +102,14 @@ class StreamConfig(Record):
 
     @model_validator(mode="after")
     def validate_protocol(self) -> StreamConfig:
+        if self.suite_names is not None:
+            available = STANDARD_SUITES if self.benchmark == "libero" else PRO_SUITES
+            if len(set(self.suite_names)) != len(self.suite_names) or any(
+                suite not in available for suite in self.suite_names
+            ):
+                raise ValueError(
+                    "suite_names must be distinct suites belonging to the benchmark"
+                )
         if len(set(self.task_ids)) != len(self.task_ids) or any(
             not 0 <= task <= 9 for task in self.task_ids
         ):
@@ -121,7 +130,9 @@ class StreamConfig(Record):
 
     @property
     def suites(self) -> tuple[str, ...]:
-        """Return the fixed suite order for the chosen benchmark."""
+        """Return selected suites in order, defaulting to the complete benchmark."""
+        if self.suite_names is not None:
+            return tuple(self.suite_names)
         return STANDARD_SUITES if self.benchmark == "libero" else PRO_SUITES
 
     def cases(self, *, construction: bool) -> list[TaskCase]:
@@ -258,7 +269,9 @@ def plan(config: StreamConfig) -> dict[str, Any]:
         "evaluation_cases": [case.model_dump(mode="json") for case in evaluation],
         "expected_rollouts": 4 * len(construction),
         "full_paper_case_table": config.task_ids == list(range(10))
-        and config.evaluation_seeds == list(range(1, 11)),
+        and config.evaluation_seeds == list(range(1, 11))
+        and config.suites
+        == (STANDARD_SUITES if config.benchmark == "libero" else PRO_SUITES),
         "behavior_verified": False,
         "unresolved": [
             "native initial-state identities require server validation",
