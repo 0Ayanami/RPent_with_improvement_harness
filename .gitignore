@@ -24,5 +24,14 @@ build/
 .claude/settings.json
 .venv/
 
+# Keep deployment caches and machine-local runtime configuration out of Git.
+/.cache/
+/.tmp/
+/.config/
+/.local/
+
 # Standalone calibration environment.
 .venv-calibration/
+
+harness2
+examples

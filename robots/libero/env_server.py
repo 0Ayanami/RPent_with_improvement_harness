@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 from typing import TYPE_CHECKING, Any
@@ -81,7 +82,9 @@ def build_env_cfg(
             "video_cfg": {
                 "save_video": True,
                 "info_on_video": True,
-                "video_base_dir": "/tmp/primitive_videos",
+                "video_base_dir": os.environ.get(
+                    "RPENT_LIBERO_VIDEO_DIR", "/tmp/primitive_videos"
+                ),
             },
             "init_params": {
                 "camera_heights": 256,
@@ -106,6 +109,8 @@ def make_env(
     seed: int,
     suite_name: str = "libero_spatial",
     max_episode_steps: int = 10000,
+    *,
+    initial_state_identity: dict[str, str] | None = None,
 ) -> LiberoEnv:
     """Build a single-env LiberoEnv pinned to ``task_id`` / ``seed``."""
     from rlinf.envs.sim.libero.libero_env import LiberoEnv
@@ -116,11 +121,20 @@ def make_env(
         raise ValueError(
             f"task_id must be in [0, {suite.n_tasks}) for suite {suite_name!r}; got {task_id}"
         )
-    trials = len(suite.get_task_init_states(task_id))
+    initial_states = suite.get_task_init_states(task_id)
+    trials = len(initial_states)
     if trials == 0:
         raise ValueError(f"Suite {suite_name!r}, task {task_id} has no initial states")
     first_id = sum(len(suite.get_task_init_states(t)) for t in range(task_id))
     rid = first_id + (seed % trials)
+    if initial_state_identity is not None:
+        state = np.ascontiguousarray(np.asarray(initial_states[seed % trials]))
+        digest = hashlib.sha256()
+        digest.update(f"{state.dtype.str}:{state.shape}:".encode())
+        digest.update(state.tobytes())
+        initial_state_identity["id"] = (
+            f"{suite_name}:t{task_id}:i{seed % trials}:sha256:{digest.hexdigest()}"
+        )
     cfg = build_env_cfg(
         task_suite_name=suite_name,
         specific_reset_id=rid,
@@ -146,7 +160,9 @@ class LiberoEnvFacade(BaseEnvFacade):
     trip.
     """
 
-    def __init__(self, env: LiberoEnv, *, meta: dict):
+    def __init__(
+        self, env: LiberoEnv, *, meta: dict, initial_state_id: str | None = None
+    ):
         self._env = env
         self._env_idx = 0
         self._closed = False
@@ -154,6 +170,7 @@ class LiberoEnvFacade(BaseEnvFacade):
         # client compares against its own expected values at construction
         # and refuses to talk to a stale or mis-configured server.
         self._meta = dict(meta)
+        self._initial_state_id = initial_state_id
         super().__init__()
 
     def _register_rpc(self) -> None:
@@ -164,9 +181,16 @@ class LiberoEnvFacade(BaseEnvFacade):
                 "env.render_camera": self.render_camera,
                 "env.get_camera_meta": self.get_camera_meta,
                 "env.get_task_language": self.get_task_language,
+                "env.get_initial_state_id": self.get_initial_state_id,
             }
         )
-        self._readonly_methods.add("env.get_task_language")
+        self._readonly_methods.update(
+            {"env.get_task_language", "env.get_initial_state_id"}
+        )
+
+    def get_initial_state_id(self) -> str | None:
+        """Identify the selected benchmark initial state independently of seed aliases."""
+        return self._initial_state_id
 
     # ---- shape helpers ----
 
@@ -386,14 +410,17 @@ def main():
 
         torch.cuda.set_device(args.cuda_device)
 
+    initial_state_identity: dict[str, str] = {}
     raw_env = make_env(
         args.task,
         args.seed,
         suite_name=args.suite,
         max_episode_steps=args.max_episode_steps,
+        initial_state_identity=initial_state_identity,
     )
     facade = LiberoEnvFacade(
         raw_env,
+        initial_state_id=initial_state_identity["id"],
         meta={
             "suite": args.suite,
             "task": args.task,

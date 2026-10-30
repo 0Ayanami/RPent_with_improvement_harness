@@ -138,7 +138,13 @@ class FakeCodex:
         self.closed = True
 
 
-def make_planner(tmp_path: Path, sink: RecordingSink, *, timeout_s: float = 1):
+def make_planner(
+    tmp_path: Path,
+    sink: RecordingSink,
+    *,
+    timeout_s: float = 1,
+    tools_only: bool = False,
+):
     return CodexPlanner(
         output_dir=str(tmp_path),
         repo_root=tmp_path,
@@ -147,6 +153,7 @@ def make_planner(tmp_path: Path, sink: RecordingSink, *, timeout_s: float = 1):
         output_path=tmp_path / "codex.out",
         model="fake-codex",
         dashboard_events=sink,
+        tools_only=tools_only,
     )
 
 
@@ -361,6 +368,105 @@ def test_planner_forwards_configured_service_tier(
     fake_codex = FakeCodex.instances[0]
     assert fake_codex.thread_options["service_tier"] == "fast"
     assert fake_codex.thread.turn_prompts[0][1]["service_tier"] == "fast"
+
+
+def test_tools_only_codex_keeps_only_rpent_mcp_and_supplied_instructions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = install_fake_backend(monkeypatch)
+    FakeCodex.events = [
+        {
+            "method": "item/completed",
+            "payload": {
+                "item": {
+                    "type": "mcpToolCall",
+                    "server": "rpent",
+                    "tool": "finish",
+                    "status": "completed",
+                    "arguments": {"status": "success"},
+                    "result": "accepted",
+                }
+            },
+        },
+        {"method": "turn/completed", "payload": {"turn": {"status": "completed"}}},
+    ]
+    result = make_planner(tmp_path, RecordingSink(), tools_only=True).solve(
+        system_prompt="Only supplied memory and ordinary task evidence.",
+        user_message="Execute the task.",
+        toolkit=FakeToolkit(),
+        max_turns=2,
+    )
+    assert result.error is None
+    assert result.finish_result["status"] == "success"
+    client = FakeCodex.instances[0]
+    assert client.thread_options["ephemeral"] is True
+    assert (
+        client.thread_options["base_instructions"]
+        == "Only supplied memory and ordinary task evidence."
+    )
+    assert (
+        client.thread_options["sandbox"] == codex_module.openai_codex.Sandbox.read_only
+    )
+    assert (
+        client.thread.turn_prompts[0][1]["sandbox"]
+        == codex_module.openai_codex.Sandbox.read_only
+    )
+    overrides = configs[0]["config_overrides"]
+    assert overrides.index("mcp_servers={}") < overrides.index(
+        'mcp_servers.rpent.url="http://fake.invalid/mcp/"'
+    )
+    assert "plugins={}" in overrides
+    assert "features.memories=false" in overrides
+    assert "features.hooks=false" in overrides
+    assert "features.shell_tool=false" in overrides
+    assert 'mcp_servers.rpent.default_tools_approval_mode="approve"' in overrides
+    assert 'web_search="disabled"' in overrides
+    assert "project_doc_max_bytes=0" in overrides
+
+
+@pytest.mark.parametrize(
+    "tools_only,mcp_url", [(False, "http://127.0.0.1:8765/mcp/"), (True, None)]
+)
+def test_rpent_tool_approval_is_scoped_to_the_owned_tools_only_server(
+    tmp_path: Path, tools_only: bool, mcp_url: str | None
+) -> None:
+    config = codex_module.build_codex_config(
+        mcp_url=mcp_url,
+        base_url=None,
+        api_key=None,
+        cwd=str(tmp_path),
+        tools_only=tools_only,
+    )
+    assert not any(
+        "default_tools_approval_mode" in value for value in config.config_overrides
+    )
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"type": "commandExecution", "command": "read private evaluation"},
+        {"type": "fileChange", "changes": []},
+        {"type": "mcpToolCall", "server": "other", "tool": "read_text_file"},
+        {"type": "dynamicToolCall", "tool": "external"},
+        {"type": "webSearch", "query": "hidden evidence"},
+        {"type": "imageView", "path": "private.png"},
+    ],
+)
+def test_tools_only_codex_rejects_native_and_foreign_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: dict[str, Any]
+) -> None:
+    install_fake_backend(monkeypatch)
+    FakeCodex.events = [{"method": "item/started", "payload": {"item": item}}]
+    toolkit = FakeToolkit()
+    result = make_planner(tmp_path, RecordingSink(), tools_only=True).solve(
+        system_prompt="Task rules.", user_message="Task.", toolkit=toolkit, max_turns=2
+    )
+    assert "unapproved tool call" in result.error
+    assert result.finish_result is None
+    assert FakeCodex.instances[0].closed
+    assert FakeMcpServer.instances[0].stopped
+    assert toolkit.cancel_calls == 1
 
 
 def test_successful_fake_codex_lifecycle_uses_fake_mcp_and_accounts_events(

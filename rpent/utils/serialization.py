@@ -20,6 +20,24 @@ import dataclasses
 from typing import Any
 
 
+def strip_inline_images(value: Any) -> Any:
+    """Copy transcript values while omitting bulky inline image payloads."""
+    if isinstance(value, list):
+        return [strip_inline_images(item) for item in value]
+    if isinstance(value, dict):
+        if value.get("type") == "image":
+            return {"type": "image", "source": {"_omitted_for_transcript": True}}
+        if value.get("type") in {"image_url", "input_image"}:
+            return {
+                "type": value["type"],
+                "image_url": {"_omitted_for_transcript": True},
+            }
+        return {key: strip_inline_images(item) for key, item in value.items()}
+    if isinstance(value, str) and value.startswith("data:image/"):
+        return "[Inline image omitted from transcript]"
+    return value
+
+
 def to_numpy_tree(value: Any) -> Any:
     """Recursively convert tensors and nested values into pickle-safe data."""
     if hasattr(value, "detach") and hasattr(value, "cpu") and hasattr(value, "numpy"):

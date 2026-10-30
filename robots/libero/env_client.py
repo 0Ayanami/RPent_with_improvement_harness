@@ -44,11 +44,14 @@ class LiberoEnvClient(BaseEnvClient):
         *,
         expected_meta: dict,
         return_all_frames: bool = False,
+        reset_on_connect: bool = True,
     ):
         self.return_all_frames = return_all_frames
         self.terminated = False
         self.truncated = False
-        super().__init__(client, expected_meta=expected_meta)
+        super().__init__(
+            client, expected_meta=expected_meta, reset_on_connect=reset_on_connect
+        )
 
     def check_done(self, term, trunc) -> None:
         self.terminated |= bool(np.asarray(term).any())
@@ -95,6 +98,12 @@ class LiberoEnvClient(BaseEnvClient):
 
     def raw_obs(self) -> dict:
         return self._client.call("env.raw_obs", timeout_s=self._TIMEOUT_S["default"])
+
+    def get_initial_state_id(self) -> str | None:
+        """Return the benchmark layout identity supplied by the environment server."""
+        return self._client.call(
+            "env.get_initial_state_id", timeout_s=self._TIMEOUT_S["default"]
+        )
 
     def render_camera(
         self,

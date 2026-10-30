@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
@@ -170,6 +169,10 @@ def sync_version(
     reuse. Ref pointers are scoped to the repository, requested revision and
     version. Historical unversioned layouts require their matching client.
     """
+    # HF synchronization uses POSIX advisory locks on the execution server.
+    # Local corpora and robot discovery remain available on Windows.
+    import fcntl
+
     from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
     if version not in (GPT5, ASTRA):

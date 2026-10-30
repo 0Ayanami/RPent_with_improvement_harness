@@ -101,6 +101,7 @@ class CodexPlanner(Planner):
         output_path: str | Path | None = None,
         model: str | None = None,
         reasoning_effort: str = "none",
+        tools_only: bool = False,
     ):
         """Initialize the Codex SDK backend."""
         self._output_dir = str(output_dir)
@@ -113,13 +114,16 @@ class CodexPlanner(Planner):
         self._api_key = os.environ.get("CODEX_API_KEY", None)
         self._service_tier = os.environ.get("CODEX_SERVICE_TIER", None)
         self._dashboard_events = dashboard_events
+        self._tools_only = tools_only
         if reasoning_effort not in REASONING_EFFORTS:
             raise ValueError(f"unsupported reasoning effort: {reasoning_effort}")
         self._thread_options = {
             "approval_mode": openai_codex.ApprovalMode.deny_all,
             "cwd": self._repo_root,
             "model": self._model,
-            "sandbox": openai_codex.Sandbox.full_access,
+            "sandbox": openai_codex.Sandbox.read_only
+            if tools_only
+            else openai_codex.Sandbox.full_access,
         }
         if self._service_tier:
             self._thread_options["service_tier"] = self._service_tier
@@ -149,6 +153,7 @@ class CodexPlanner(Planner):
                 self._solve_dashboard(
                     prompt=prompt,
                     initial_user_text=user_message,
+                    system_prompt=system_prompt,
                     toolkit=toolkit,
                     max_turns=max_turns,
                     interaction=dashboard_interaction,
@@ -189,6 +194,7 @@ class CodexPlanner(Planner):
                 mcp_url,
                 toolkit,
                 input_queue,
+                system_prompt,
             ),
             name="codex-sdk",
             daemon=True,
@@ -285,12 +291,13 @@ class CodexPlanner(Planner):
         mcp_url: str,
         toolkit: Toolkit,
         input_queue: "queue.Queue[str | None] | None" = None,
+        system_prompt: str = "",
     ) -> None:
         try:
             chunks: list[str] = []
             with openai_codex.Codex(config=self._build_config(mcp_url)) as codex:
                 state["codex"] = codex
-                thread = codex.thread_start(**self._thread_options)
+                thread = codex.thread_start(**self._session_options(system_prompt))
                 state["thread"] = thread
 
                 with (
@@ -345,6 +352,10 @@ class CodexPlanner(Planner):
                     try:
                         for event in turn.stream():
                             _write_jsonl(raw_f, _message_to_json(event))
+                            if self._tools_only:
+                                validate_codex_tools_event(
+                                    event, allowed_server="rpent"
+                                )
                             if rendered := recorder.observe(event):
                                 with write_lock:
                                     chunks.append(rendered)
@@ -381,6 +392,7 @@ class CodexPlanner(Planner):
         *,
         prompt: str,
         initial_user_text: str,
+        system_prompt: str,
         toolkit: Toolkit,
         max_turns: int,
         interaction: DashboardInteractionPort,
@@ -401,6 +413,8 @@ class CodexPlanner(Planner):
 
                 def emit_event(event: Any) -> None:
                     _write_jsonl(raw_f, _message_to_json(event))
+                    if self._tools_only:
+                        validate_codex_tools_event(event, allowed_server="rpent")
                     rendered = recorder.observe(event)
                     if rendered:
                         chunks.append(rendered)
@@ -434,7 +448,7 @@ class CodexPlanner(Planner):
                 )
                 session = _CodexDashboardSession(
                     config=self._build_config(mcp_url),
-                    thread_options=self._thread_options,
+                    thread_options=self._session_options(system_prompt),
                     turn_options=self._turn_options,
                     recorder=recorder,
                     emit_event=emit_event,
@@ -491,12 +505,23 @@ class CodexPlanner(Planner):
 
     # -- config builder ----------------------------------------------------
 
+    def _session_options(self, system_prompt: str) -> dict[str, Any]:
+        options = dict(self._thread_options)
+        if self._tools_only:
+            options.update(
+                base_instructions=system_prompt,
+                developer_instructions="Use only RPent MCP tools. Read and write files only through those tools.",
+                ephemeral=True,
+            )
+        return options
+
     def _build_config(self, mcp_url: str) -> Any:
         return build_codex_config(
             mcp_url=mcp_url,
             base_url=self._base_url,
             api_key=self._api_key,
             cwd=self._repo_root,
+            tools_only=self._tools_only,
         )
 
 
@@ -858,6 +883,7 @@ def build_codex_config(
     base_url: str | None,
     api_key: str | None,
     cwd: str,
+    tools_only: bool = False,
 ) -> Any:
     """Build the Codex SDK config shared by the planner and the check.
 
@@ -867,6 +893,7 @@ def build_codex_config(
         base_url: Custom Responses-compatible endpoint, or ``None``.
         api_key: Key exported to the child as ``RPENT_CODEX_PROVIDER_KEY``.
         cwd: Working directory handed to the Codex child process.
+        tools_only: Disable inherited integrations and built-in execution tools.
 
     Returns:
         The ``openai_codex.CodexConfig`` to open a session with.
@@ -874,7 +901,17 @@ def build_codex_config(
     env = _codex_environment()
     if api_key:
         env[PROVIDER_ENV_KEY] = api_key
-    config_overrides = _codex_mcp_config_overrides(mcp_url=mcp_url, base_url=base_url)
+    config_overrides = codex_tools_only_overrides() if tools_only else []
+    config_overrides.extend(
+        _codex_mcp_config_overrides(mcp_url=mcp_url, base_url=base_url)
+    )
+    if tools_only and mcp_url:
+        # The application owns this dedicated toolkit and its operation guards.
+        # Authorize its calls explicitly; deny_all still rejects native tools
+        # and unrelated approval requests instead of blocking RPent actions.
+        config_overrides.append(
+            'mcp_servers.rpent.default_tools_approval_mode="approve"'
+        )
     # Project development instructions and skills are excluded from planner context.
     config_overrides.append("project_doc_max_bytes=0")
     disabled_skills = [
@@ -895,6 +932,50 @@ def build_codex_config(
     if codex_bin := os.environ.get("CODEX_BIN"):
         kwargs["codex_bin"] = codex_bin
     return openai_codex.CodexConfig(**kwargs)
+
+
+def codex_tools_only_overrides() -> list[str]:
+    """Remove inherited integration context before attaching explicit RPent tools."""
+    return [
+        "mcp_servers={}",
+        "plugins={}",
+        "apps={ _default = { enabled = false } }",
+        "features.apps=false",
+        "features.multi_agent=false",
+        "features.shell_tool=false",
+        "features.memories=false",
+        "features.hooks=false",
+        "features.goals=false",
+        "features.remote_plugin=false",
+        "features.skill_mcp_dependency_install=false",
+        "tools.view_image=false",
+        'web_search="disabled"',
+    ]
+
+
+def validate_codex_tools_event(event: Any, *, allowed_server: str | None) -> None:
+    """Reject unexpected runtime tool activity so it cannot qualify an experiment.
+
+    Runtime configuration disables native execution capabilities. This event
+    check also makes a runtime/configuration regression invalidate the trial.
+    ``allowed_server=None`` permits no tool activity, as required by editors.
+    """
+    if str(_get(event, "method", "")) not in {"item/started", "item/completed"}:
+        return
+    item = _unwrap(_get(_get(event, "payload"), "item"))
+    item_type = str(_get(item, "type", ""))
+    if item_type in {"userMessage", "agentMessage", "reasoning", "contextCompaction"}:
+        return
+    if item_type == "mcpToolCall" and allowed_server is not None:
+        server = _get(item, "server")
+        if server == allowed_server or (
+            server is None
+            and str(_get(item, "tool", "")).startswith(f"mcp__{allowed_server}__")
+        ):
+            return
+    raise RuntimeError(
+        f"Codex tools-only session attempted an unapproved tool call: {item_type}"
+    )
 
 
 def run_probe_turn(

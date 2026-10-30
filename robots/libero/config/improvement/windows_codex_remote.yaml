@@ -1,0 +1,46 @@
+# Windows 本地调度；Linux GPU 服务器执行原语。路径相对本文件。
+# 推荐用 python -m rpent.improvement.ssh setup 生成独立的本地配置。
+schema_version: 2
+experiment_id: libero-codex-ppc-meta
+output_dir: runs/meta
+benchmark: libero
+k: 1
+paper_version: 2607.08448v5
+use_meta_library: true
+meta_char_budget: 12000
+task_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+evaluation_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+initial_memory:
+  path: memory/initial
+  provenance: "人工创建的空 MEMORY.md，无既有经验"
+reference_memory:
+  path: memory/reference
+  provenance: "运行前填写：原 Harness-VLA 语料来源、revision、生成配置和 scene-seed 历史"
+execution: &execution
+  robot: libero
+  planner: codex
+  model: gpt-5.5
+  vla_identity: "运行前填写：pi05_libero130_fullshot 固定 checkpoint revision 和 SHA256"
+  reasoning_effort: xhigh
+  max_tokens: 8192
+  remote:
+    endpoint: http://127.0.0.1:8870
+    request_timeout_s: 1200
+  robot_options:
+    libero_type: standard
+    max_episode_steps: 10000
+    # 均为服务器回环地址，不是 Windows 的模型端口。
+    vla_endpoint: http://127.0.0.1:8801
+    sam3_endpoint: http://127.0.0.1:8802
+  budget:
+    max_turns: 100
+    timeout_s: 5000
+    max_env_steps: 10000
+    max_vla_calls: null
+evaluation_execution: *execution
+editor:
+  planner: codex
+  model: gpt-5.5
+  reasoning_effort: xhigh
+  max_tokens: 8192
+  timeout_s: 300

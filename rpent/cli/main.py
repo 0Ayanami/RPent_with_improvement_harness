@@ -58,6 +58,7 @@ from rpent.planner.base import REASONING_EFFORTS, build_planner
 from rpent.planner.check import BASE_URL_ENV_BY_PLANNER
 from rpent.robots import enumerate_robots, get_robot_spec, get_toolkit
 from rpent.utils.logging import get_logger, init_output_dir
+from rpent.utils.serialization import strip_inline_images as _strip_images
 
 logger = get_logger("agent")
 
@@ -65,23 +66,6 @@ logger = get_logger("agent")
 # ---------------------------------------------------------------------------
 # API agent transcript serialization
 # ---------------------------------------------------------------------------
-
-
-def _strip_images(value):
-    """Return a copy of ``value`` with inline image payloads omitted.
-
-    SDK objects are left untouched; ``json.dump(..., default=str)`` handles
-    them at write time. Only the bulky base64 image blocks are replaced.
-    """
-    if isinstance(value, list):
-        return [_strip_images(v) for v in value]
-    if isinstance(value, dict):
-        if value.get("type") == "image":
-            return {"type": "image", "source": {"_omitted_for_transcript": True}}
-        if value.get("type") == "image_url":
-            return {"type": "image_url", "image_url": {"_omitted_for_transcript": True}}
-        return {k: _strip_images(v) for k, v in value.items()}
-    return value
 
 
 def _serialize_messages(messages: list[dict]) -> list[dict]:

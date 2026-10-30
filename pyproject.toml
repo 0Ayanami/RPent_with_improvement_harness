@@ -37,7 +37,7 @@ dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.18",
     "claude-agent-sdk>=0.1.60",
-    "openai-codex>=0.1.0b3",
+    "openai-codex>=0.163.0",
     "mcp>=1.23.0,<2.0.0",
     "huggingface_hub>=0.24",
     "prompt-toolkit>=3.0.48",
@@ -52,6 +52,7 @@ rpent = "rpent.cli.main:main"
 rpent-memory = "rpent.cli.memory:main"
 rpent-check-llm = "rpent.cli.check_llm:main"
 rpent-flywheel = "rpent.flywheel.cli:main"
+rpent-improve = "rpent.cli.improvement:main"
 
 [project.urls]
 Homepage = "https://github.com/RLinf/RPent"
@@ -233,6 +234,10 @@ exclude = ["tests*", "docs*", "examples*", "docker*", "toolkits*"]
 [tool.setuptools.package-data]
 "rpent.dashboard" = ["*.html", "static/*.css", "static/*.js"]
 "robots.yam" = ["config/*.yaml", "guides/*.md"]
+"robots.libero" = [
+    "config/improvement/*.yaml", "guides/*.md",
+    "deployment/*.json", "deployment/*.sh", "deployment/*.ps1", "deployment/*.txt",
+]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]

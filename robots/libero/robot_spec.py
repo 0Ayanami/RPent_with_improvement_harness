@@ -148,12 +148,13 @@ def get_toolkit(
     mode: str = "evaluation",
     attempts_per_session: int = 0,
     state_output_dir: Path | str | None = None,
+    memory: MemoryManager | None = None,
 ):
     """Return the LIBERO toolkit for the current session."""
     from robots.libero.toolkit import LiberoToolkit
 
     explore = mode == "exploration"
-    memory = MemoryManager(
+    memory = memory or MemoryManager(
         root=config.prompt_vars.get("memory_dir") or get_memory_dir("libero"),
         memory_access="inbox_write" if explore else "read_only",
         inbox_cell_tag=config.recipe_tag if explore else None,
@@ -530,6 +531,7 @@ def _init_runtime(
                     "seed": args.seed,
                     "max_episode_steps": args.max_episode_steps,
                 },
+                reset_on_connect=getattr(args, "env_reset_on_connect", True),
             )
         },
         "vla": lambda rpc: {"model": Pi05VLAClient(rpc, embodiment="libero")},

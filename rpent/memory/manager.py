@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-import fcntl
+import hashlib
 import os
 import re
 import shutil
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ _KINDS = tuple(f"{kind}_" for kind in sorted(KINDS))
 
 
 def _split_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
-    text = path.read_text(errors="replace")
+    text = path.read_text(encoding="utf-8", errors="replace")
     if not text.startswith("---"):
         raise ValueError("missing YAML frontmatter")
     end = text.find("\n---", 3)
@@ -139,10 +140,24 @@ class MemoryManager:
         *,
         memory_access: str = "read_only",
         inbox_cell_tag: str | None = None,
+        read_audit: Callable[[dict[str, Any]], None] | None = None,
+        allowed_read_roots: Sequence[str | Path] | None = None,
+        allowed_write_roots: Sequence[str | Path] | None = None,
     ) -> None:
         self._root = Path(root).resolve()
         self._memory_access = memory_access
         self._inbox_cell_tag = inbox_cell_tag
+        self._read_audit = read_audit
+        self._allowed_read_roots = (
+            tuple(Path(path).resolve() for path in allowed_read_roots)
+            if allowed_read_roots is not None
+            else None
+        )
+        self._allowed_write_roots = (
+            tuple(Path(path).resolve() for path in allowed_write_roots)
+            if allowed_write_roots is not None
+            else None
+        )
 
     @property
     def root(self) -> Path:
@@ -173,8 +188,48 @@ class MemoryManager:
         resolved = self._authorize(path, write=False)
         return resolved, sorted(os.listdir(resolved)) if resolved.exists() else None
 
-    def record_read(self, path: Path, content: str) -> None:
-        """Record the content delivered by a file tool, when audit is required."""
+    def record_read(
+        self,
+        path: Path,
+        content: str,
+        *,
+        source_content: str | None = None,
+        source_bytes: bytes | None = None,
+    ) -> None:
+        """Record source bytes and the possibly truncated file-tool payload.
+
+        Callers that own the read should pass the original bytes and decoded
+        text so the audit describes that read even if the file later changes.
+        Legacy callers may omit them; the source is then read at audit time.
+        """
+        if self._read_audit is None:
+            return
+        resolved = path.resolve()
+        if source_bytes is None:
+            source_bytes = resolved.read_bytes()
+        if source_content is None:
+            source_content = (
+                source_bytes.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
+        self._read_audit(
+            {
+                "path": str(resolved),
+                "relative_path": (
+                    resolved.relative_to(self._root).as_posix()
+                    if resolved.is_relative_to(self._root)
+                    else None
+                ),
+                "source_hash": "sha256:" + hashlib.sha256(source_bytes).hexdigest(),
+                "provided_hash": "sha256:"
+                + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                "source_chars": len(source_content),
+                "provided_chars": len(content),
+                "truncated": content != source_content,
+                "access_method": "file_tool",
+            }
+        )
 
     def authorize_write(self, path: str | Path) -> Path:
         """Resolve a path and enforce the current run's memory write permissions."""
@@ -183,6 +238,26 @@ class MemoryManager:
     def _authorize(self, path: str | Path, *, write: bool) -> Path:
         repo_root = get_repo_root()
         resolved = (repo_root / path).resolve()
+        if (
+            write
+            and self._allowed_write_roots is not None
+            and not any(
+                resolved.is_relative_to(root) for root in self._allowed_write_roots
+            )
+        ):
+            raise PermissionError(
+                f"writing outside allowed trial roots is denied: {path}"
+            )
+        if (
+            not write
+            and self._allowed_read_roots is not None
+            and not any(
+                resolved.is_relative_to(root) for root in self._allowed_read_roots
+            )
+        ):
+            raise PermissionError(
+                f"reading outside allowed trial roots is denied: {path}"
+            )
         if not resolved.is_relative_to(self._root):
             if resolved.is_relative_to((repo_root / "memory").resolve()):
                 raise PermissionError(
@@ -223,6 +298,12 @@ class MemoryManager:
         copied to task-specific/. MEMORY.md is refreshed at the end.
         """
         self.check_layout()
+        try:
+            import fcntl
+        except ImportError as exc:
+            raise RuntimeError(
+                "memory merging requires POSIX file locking; run merge_memory on Linux"
+            ) from exc
         root = self._root
         run_dir = Path(run_state_dir).resolve()
         internal = root / "_internal"
@@ -263,7 +344,7 @@ class MemoryManager:
                 destination = tiers[metadata["scope"]] / f"{memory_id}.md"
                 published_draft = True
                 if not destination.exists():
-                    destination.write_text(_render(metadata, body))
+                    destination.write_text(_render(metadata, body), encoding="utf-8")
                     result[metadata["scope"]] += 1
                     continue
                 try:
@@ -271,7 +352,7 @@ class MemoryManager:
                 except ValueError:
                     # Archive the incoming draft as a conflict.
                     conflict = conflicts / f"{memory_id}__from_{cell_tag}.md"
-                    conflict.write_text(_render(metadata, body))
+                    conflict.write_text(_render(metadata, body), encoding="utf-8")
                     result["conflicts"] += 1
                     result["skipped"].append(
                         f"{source.name}: existing non-mergeable note "
@@ -284,11 +365,13 @@ class MemoryManager:
                 if credited:
                     continue
                 merged_metadata = _merge_evidence(old_metadata, metadata)
-                destination.write_text(_render(merged_metadata, old_body))
+                destination.write_text(
+                    _render(merged_metadata, old_body), encoding="utf-8"
+                )
                 result["evidence"] += 1
                 if body.strip() != old_body.strip():
                     conflict = conflicts / f"{memory_id}__from_{cell_tag}.md"
-                    conflict.write_text(_render(metadata, body))
+                    conflict.write_text(_render(metadata, body), encoding="utf-8")
                     result["conflicts"] += 1
 
             if published_draft:
@@ -329,7 +412,7 @@ class MemoryManager:
         }
         for scope in groups:
             for path in sorted((root / scope).glob("*.md")):
-                text = path.read_text(errors="replace")
+                text = path.read_text(encoding="utf-8", errors="replace")
                 if not text.startswith("---"):
                     continue
                 try:
@@ -357,7 +440,7 @@ class MemoryManager:
                 lines.append(f"- [{label}]({scope}/{filename}){suffix}")
         index = root / "MEMORY.md"
         index.parent.mkdir(parents=True, exist_ok=True)
-        index.write_text("\n".join(lines) + "\n")
+        index.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         return index
 
     def validate(self) -> list[str]:
@@ -375,24 +458,24 @@ class MemoryManager:
         ids: dict[str, Path] = {}
         for scope in ("global", "task-family"):
             for path in sorted((root / scope).glob("*.md")):
-                text = path.read_text(errors="replace")
+                text = path.read_text(encoding="utf-8", errors="replace")
                 if not text.startswith("---"):
                     continue
                 try:
                     metadata, _ = _split_frontmatter(path)
                     _validate(metadata)
                 except ValueError as exc:
-                    problems.append(f"{path.relative_to(root)}: {exc}")
+                    problems.append(f"{path.relative_to(root).as_posix()}: {exc}")
                     continue
                 memory_id = str(metadata.get("id") or "")
                 if memory_id != path.stem:
                     problems.append(
-                        f"{path.relative_to(root)}: id {memory_id!r} does not match filename"
+                        f"{path.relative_to(root).as_posix()}: id {memory_id!r} does not match filename"
                     )
                 if memory_id in ids:
                     problems.append(
-                        f"{path.relative_to(root)}: duplicate id also in "
-                        f"{ids[memory_id].relative_to(root)}"
+                        f"{path.relative_to(root).as_posix()}: duplicate id also in "
+                        f"{ids[memory_id].relative_to(root).as_posix()}"
                     )
                 ids[memory_id] = path
         return problems

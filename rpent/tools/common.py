@@ -47,13 +47,20 @@ class CommonTools:
         if resolved.is_dir():
             return ToolResult(data={"error": f"is a directory: {resolved}"})
         with self._file_lock:
-            text = resolved.read_text(encoding="utf-8", errors="replace")
+            source_bytes = resolved.read_bytes()
+            text = (
+                source_bytes.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
         content = text
         if len(text) > max_chars:
             content = text[:max_chars] + (
                 f"\n\n[TRUNCATED — file is {len(text)} chars, showed first {max_chars}]"
             )
-        self._memory.record_read(resolved, content)
+        self._memory.record_read(
+            resolved, content, source_content=text, source_bytes=source_bytes
+        )
         return ToolResult(
             data={"path": str(resolved), "size": len(text), "content": content}
         )

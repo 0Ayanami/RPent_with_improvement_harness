@@ -1,0 +1,45 @@
+# Harness2 memory 构建实验；所有路径相对本配置文件。
+# 首次使用需准备空初始语料与固定参考语料，并填写真实来源和 checkpoint 身份。
+schema_version: 2
+experiment_id: libero-memory-ppc-meta
+output_dir: ../../../../logs/libero-memory-ppc-meta
+benchmark: libero
+k: 1
+paper_version: 2607.08448v5
+use_meta_library: true
+meta_char_budget: 12000
+task_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+evaluation_seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+initial_memory:
+  path: ../../../../memory/improvement_initial/libero
+  provenance: "人工准备的空 MEMORY.md，无既有 task-specific/results/global 经验；运行前核对实际内容"
+reference_memory:
+  path: ../../../../memory/improvement_reference/libero
+  provenance: "运行前填写：原 Harness-VLA 语料来源、HF revision、生成配置及已知污染/scene-seed 历史"
+# API 后端为本适配选择，与历史 Codex/coding-agent 论文运行不同。
+# 100 turns / 8192 tokens / 5000s / 10000 steps 来自仓库复现配置，非论文公布常量。
+execution: &execution
+  robot: libero
+  planner: api
+  model: openai:gpt-5.5
+  vla_identity: "pi05_libero130_fullshot：运行前填写固定 checkpoint revision 和文件 SHA256"
+  max_tokens: 8192
+  reasoning_effort: xhigh
+  robot_options:
+    libero_type: standard
+    max_episode_steps: 10000
+    # 可共用 VLA/SAM3 服务；Env 每回合自启以匹配 task/seed，不固定 env_endpoint。
+    # vla_endpoint: http://127.0.0.1:8801
+    # sam3_endpoint: http://127.0.0.1:8802
+  budget:
+    max_turns: 100
+    timeout_s: 5000
+    max_env_steps: 10000
+    max_vla_calls: null
+# 可只调整 budget；比较组执行模型、工具、checkpoint 与其余参数固定。
+evaluation_execution: *execution
+editor:
+  model: openai:gpt-5.5
+  max_tokens: 8192
+  timeout_s: 120
+  reasoning_effort: xhigh

@@ -21,7 +21,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from robots.libero.env_server import make_env
+from robots.libero.env_server import LiberoEnvFacade, build_env_cfg, make_env
+
+
+def test_video_output_can_be_contained_in_the_run_workspace(monkeypatch, tmp_path):
+    directory = tmp_path / "videos"
+    monkeypatch.setenv("RPENT_LIBERO_VIDEO_DIR", str(directory))
+    assert build_env_cfg().video_cfg.video_base_dir == str(directory)
 
 
 @pytest.fixture
@@ -76,3 +82,26 @@ def test_valid_task_offsets_and_seed_wrapping_are_preserved(
     assert config.seed == seed
     assert config.task_suite_name == "demo"
     constructor.assert_called_once()
+
+
+def test_native_initial_state_identity_detects_seed_aliases(backend):
+    identities = []
+    for seed in (0, 4, 1):
+        identity = {}
+        make_env(
+            task_id=2, seed=seed, suite_name="demo", initial_state_identity=identity
+        )
+        identities.append(identity["id"])
+    assert identities[0] == identities[1]
+    assert identities[0] != identities[2]
+    assert "demo:t2:i0:sha256:" in identities[0]
+
+
+def test_native_identity_rpc_keeps_existing_environment_metadata_unchanged():
+    metadata = {"suite": "demo", "task": 0, "seed": 0, "max_episode_steps": 32}
+    facade = LiberoEnvFacade(
+        SimpleNamespace(), meta=metadata, initial_state_id="native-layout"
+    )
+    assert facade._rpc["env.get_initial_state_id"]() == "native-layout"
+    assert "env.get_initial_state_id" in facade._readonly_methods
+    assert facade.get_env_meta() == metadata
